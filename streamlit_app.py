@@ -1,28 +1,25 @@
 import datetime
 import os
 import uuid
-import requests
+
 import pandas as pd
 import streamlit as st
+import requests
 
-
-# NTFY_TOPIC = os.environ.get("NTFY_TOPIC", "SlackerTracker")
-NTFY_TOPIC = "SlackerTracker"
+NTFY_TOPIC = os.environ.get("NTFY_TOPIC", "SlackerTracker")
 
 def send_ntfy(message: str, title: str | None = None, topic: str | None = None, priority: str = "high"):
-    """Send a notification via ntfy.sh. Uses `NTFY_TOPIC` env var if present."""
     t = topic or NTFY_TOPIC
     headers = {}
     if title:
         headers["Title"] = title
     if priority:
         headers["Priority"] = priority
-
     try:
         requests.post(f"https://ntfy.sh/{t}", data=message.encode("utf-8"), headers=headers, timeout=5)
     except Exception:
-        # Best-effort notify; don't raise errors in app
         pass
+
 
 # Add green approve box
 # Add red reject box - remove option & remove after
@@ -190,11 +187,8 @@ def process_expirations_and_conversions(tickets):
             }
             df = pd.concat([pd.DataFrame([new_red]), df], ignore_index=True)
             changed = True
-
-            # Notify via ntfy about auto-conversion
             try:
-                msg = f"Auto-converted: {user} received a Red card (from 3 Yellows) on {today.date()}"
-                send_ntfy(msg, title="Auto-convert: Red card")
+                send_ntfy(f"Auto-converted: {user} received a Red card (from 3 Yellows) on {today.date()}", title="Auto-convert: Red card")
             except Exception:
                 pass
 
@@ -353,7 +347,6 @@ def add_card_page():
         }
         st.session_state.tickets = pd.concat([pd.DataFrame([new_ticket]), st.session_state.tickets], ignore_index=True)
 
-        # Notify about new card
         try:
             msg = f"{card_type} card added for {receiver} by {submitted_by} on {date_received.strftime('%Y-%m-%d')}. Note: {note or 'N/A'}"
             send_ntfy(msg, title=f"New {card_type} card")
@@ -656,8 +649,6 @@ def house_rules_page():
             }
             st.session_state.rules = pd.concat([pd.DataFrame([new_rule]), st.session_state.rules], ignore_index=True)
             save_rules(st.session_state.rules)
-
-            # Notify about the new rule or proposal
             try:
                 if new_rule['status'] == 'active':
                     send_ntfy(f"New rule added by {created_by}: {new_rule['text']}", title="Rule added")
@@ -665,7 +656,6 @@ def house_rules_page():
                     send_ntfy(f"Rule proposed by {created_by}: {new_rule['text']}", title="Rule proposed")
             except Exception:
                 pass
-
             if created_by == "admin":
                 st.success("✅ Rule added")
             else:
@@ -775,7 +765,6 @@ def house_rules_page():
                         st.session_state.rules.loc[st.session_state.rules['id'] == row['id'], 'approvals'] = ''
                         st.session_state.rules.loc[st.session_state.rules['id'] == row['id'], 'proposed_by'] = ''
                         save_rules(st.session_state.rules)
-                        # Notify about activation
                         try:
                             send_ntfy(f"Rule activated by admin: {row['text']}", title="Rule activated")
                         except Exception:
@@ -902,6 +891,10 @@ def house_rules_page():
                             st.session_state.rules.loc[st.session_state.rules['id'] == row['id'], 'proposed_by'] = ''
                             st.session_state.rules.loc[st.session_state.rules['id'] == row['id'], 'approvals'] = ''
                             save_rules(st.session_state.rules)
+                            try:
+                                send_ntfy(f"Removal request rejected by {st.session_state.user} for rule: {row['text']}", title="Removal request rejected")
+                            except Exception:
+                                pass
                             st.success("❌ Removal request rejected (restored)")
                             st.rerun()
 
