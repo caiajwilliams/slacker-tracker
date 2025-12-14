@@ -4,8 +4,15 @@ import uuid
 
 import pandas as pd
 import streamlit as st
-import base64
-import streamlit.components.v1 as components
+
+
+# Add green approve box
+# Add red reject box - remove option & remove after
+# Add the option to take a picture of the offense (optional)
+
+
+
+
 
 # App config
 st.set_page_config(page_title="Card Tracker", page_icon="🟨🟥", layout="wide")
@@ -89,8 +96,6 @@ def load_tickets():
             df = pd.read_pickle(TICKETS_PKL)
             if "date_received" in df.columns:
                 df["date_received"] = pd.to_datetime(df["date_received"])
-            if "notified" not in df.columns:
-                df["notified"] = ""
             return df
         except Exception:
             pass
@@ -98,8 +103,6 @@ def load_tickets():
         df = pd.read_csv(TICKETS_CSV, parse_dates=["date_received"]) if os.path.getsize(TICKETS_CSV) > 0 else pd.DataFrame(
             columns=["id", "receiver", "card_type", "date_received", "submitted_by", "status", "note"]
         )
-        if "notified" not in df.columns:
-            df["notified"] = ""
         try:
             df.to_pickle(TICKETS_PKL)
         except Exception:
@@ -168,7 +171,6 @@ def process_expirations_and_conversions(tickets):
                 "submitted_by": "system",
                 "status": "active",
                 "note": "Auto-converted from 3 yellows",
-                "notified": "",
             }
             df = pd.concat([pd.DataFrame([new_red]), df], ignore_index=True)
             changed = True
@@ -221,207 +223,6 @@ def is_fully_approved(approvals_list, proposer):
     required = set(get_required_approvers(proposer))
     return required.issubset(set(approvals_list))
 
-def handle_login_notifications():
-    # Show a modal per unacknowledged active card for the logged-in user, one at a time
-    if not st.session_state.get("just_logged_in"):
-        return
-    user = st.session_state.user
-    if not user:
-        return
-
-    df = st.session_state.tickets
-    if "notified" not in df.columns:
-        df["notified"] = ""
-
-    # find unnotified active yellow/red cards
-    def user_not_notified(row):
-        notified_list = approvals_to_list(row.get("notified", ""))
-        return (
-            row.get("receiver") == user
-            and row.get("status") == "active"
-            and row.get("card_type") in ("Yellow", "Red")
-            and user not in notified_list
-        )
-
-    pending = [r for _, r in df.iterrows() if user_not_notified(r)]
-    if not pending:
-        st.session_state.just_logged_in = False
-        return
-
-    ticket = pending[0]
-    ticket_id = ticket.get("id")
-    ticket_card = ticket.get("card_type")
-    img = YELLOW_IMG if ticket_card == "Yellow" else RED_IMG
-
-    # Helper function to convert image to data URI
-    def img_to_data_uri(path):
-        try:
-            with open(path, "rb") as f:
-                data = f.read()
-            ext = os.path.splitext(path)[1].lstrip(".")
-            b64 = base64.b64encode(data).decode("utf-8")
-            return f"data:image/{ext};base64,{b64}"
-        except Exception:
-            return ""
-
-    img_uri = img_to_data_uri(img)
-
-    html = f"""
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <meta charset="utf-8">
-        <style>
-            * {{
-                margin: 0;
-                padding: 0;
-                box-sizing: border-box;
-            }}
-            body {{
-                font-family: "Source Sans Pro", -apple-system, BlinkMacSystemFont,
-                             "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-                margin: 0;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                min-height: 100vh;
-                background: rgba(0,0,0,0.75);
-                padding: 20px;
-            }}
-            .modal {{
-                background: #fff;
-                padding: 30px;
-                border-radius: 12px;
-                max-width: 600px;
-                width: 100%;
-                text-align: center;
-                box-shadow: 0 8px 40px rgba(0,0,0,0.6);
-            }}
-            h2 {{
-                margin: 8px 0;
-                font-weight: 600;
-                color: #262730;
-            }}
-            p {{
-                margin: 8px 0;
-                line-height: 1.6;
-            }}
-            .detail {{
-                color: #555;
-            }}
-            .main-text {{
-                color: #333;
-                font-size: 1.1rem;
-            }}
-            button {{
-                background: #0d6efd;
-                color: #fff;
-                padding: 12px 30px;
-                border-radius: 8px;
-                border: none;
-                font-weight: 600;
-                cursor: pointer;
-                font-size: 1rem;
-                font-family: inherit;
-                transition: background 0.2s;
-                margin-top: 10px;
-            }}
-            button:hover {{
-                background: #0b5ed7;
-            }}
-            button:disabled {{
-                background: #6c757d;
-                cursor: not-allowed;
-            }}
-            img {{
-                max-width: 200px;
-                height: auto;
-                margin-bottom: 15px;
-            }}
-        </style>
-    </head>
-    <body>
-        <div class="modal">
-            <div>
-                <img src="{img_uri}" alt="{ticket_card} card" />
-            </div>
-            <h2>You received a {ticket_card} Card</h2>
-            <p class="main-text">
-                {ticket_card} card received on {ticket.get("date_received")}
-            </p>
-            <p class="detail">
-                Submitted by: {ticket.get("submitted_by") or "N/A"}
-            </p>
-            <p class="detail">
-                Note/Rule: {ticket.get("note") or "N/A"}
-            </p>
-            <div style="margin-top:20px;">
-                <button id="ack">Acknowledge</button>
-            </div>
-        </div>
-
-        <script>
-            (function() {{
-                const btn = document.getElementById("ack");
-                const ticketId = "{ticket_id}";
-                let acknowledged = false;
-                
-                btn.addEventListener("click", function () {{
-                    if (acknowledged) return;
-                    acknowledged = true;
-                    btn.disabled = true;
-                    btn.innerText = "Acknowledged ✓";
-                    
-                    // Send message to Streamlit
-                    window.parent.postMessage({{
-                        type: 'streamlit:setComponentValue',
-                        value: ticketId
-                    }}, '*');
-                    
-                    // Also try the alternative method
-                    if (window.parent.Streamlit) {{
-                        window.parent.Streamlit.setComponentValue(ticketId);
-                    }}
-                }});
-                
-                // Notify Streamlit that component is ready
-                window.parent.postMessage({{
-                    type: 'streamlit:componentReady'
-                }}, '*');
-            }})();
-        </script>
-    </body>
-    </html>
-    """
-
-    # Use a container to prevent flickering
-    container = st.container()
-    with container:
-        # Render modal with a key to maintain state
-        res = components.html(html, height=600, scrolling=False)
-
-    # Process acknowledgement
-    if res:
-        ack_id = str(res).strip()
-        if ack_id:  # Make sure we have a valid ID
-            ticket_mask = st.session_state.tickets["id"] == ack_id
-
-            if ticket_mask.any():
-                current_notified = (
-                    st.session_state.tickets.loc[ticket_mask, "notified"].iloc[0]
-                )
-                lst = approvals_to_list(current_notified)
-
-                if user not in lst:
-                    lst.append(user)
-                    st.session_state.tickets.loc[
-                        ticket_mask, "notified"
-                    ] = list_to_approvals(lst)
-                    save_tickets(st.session_state.tickets)
-
-            # Exit notification flow and return to normal app
-            st.session_state.just_logged_in = False
-            st.rerun()
 
 
 
@@ -526,7 +327,6 @@ def add_card_page():
             "submitted_by": submitted_by,
             "status": "active",
             "note": note,
-            "notified": "",
         }
         st.session_state.tickets = pd.concat([pd.DataFrame([new_ticket]), st.session_state.tickets], ignore_index=True)
 
@@ -983,8 +783,6 @@ def main():
         login_page()
         return
 
-    # If user just logged in, show card notifications (one-by-one modals)
-    handle_login_notifications()
 
     # Sidebar
     with st.sidebar:
