@@ -77,7 +77,6 @@ def load_users():
         return df
     return pd.DataFrame(columns=["username", "display_name", "password"])
 
-
 def load_tickets():
     if os.path.exists(TICKETS_PKL):
         try:
@@ -100,13 +99,11 @@ def load_tickets():
         columns=["id", "receiver", "card_type", "date_received", "submitted_by", "status", "note"]
     )
 
-
 def save_tickets(df):
     try:
         df.to_pickle(TICKETS_PKL)
     except Exception:
         df.to_csv(TICKETS_CSV, index=False)
-
 
 def process_expirations_and_conversions(tickets):
     changed = False
@@ -147,7 +144,6 @@ def process_expirations_and_conversions(tickets):
     df["date_received"] = pd.to_datetime(df["date_received"]).dt.date
     return df, changed
 
-
 def get_days_until_expiry(date_received):
     """Calculate days until a yellow card expires"""
     if pd.isna(date_received):
@@ -159,7 +155,6 @@ def get_days_until_expiry(date_received):
     days_left = (expiry_date - today).days
     return days_left
 
-
 def format_status_badge(status):
     """Return a formatted status badge"""
     if status == "active":
@@ -169,7 +164,6 @@ def format_status_badge(status):
     elif status == "converted":
         return "🔄 Converted"
     return status
-
 
 users_df = load_users()
 tickets_df = load_tickets()
@@ -227,11 +221,9 @@ def login_page():
             else:
                 st.error("Invalid credentials")
 
-
 def logout():
     st.session_state.user = None
     st.session_state.show_success = None
-
 
 def add_card_page():
     st.markdown("### Add a New Card")
@@ -316,10 +308,7 @@ def existing_cards_page():
                 medal = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣"][idx]
                 st.markdown(f"""
                 <div style='background-color: rgba(240, 242, 246, 0.5); padding: 15px; border-radius: 10px; text-align: center; border: 1px solid rgba(0,0,0,0.1);'>
-                    <h3 style='margin: 0;'>{medal}</h3>
-                    <h4 style='margin: 5px 0;'>{row['username']}</h4>
-                    <p style='margin: 5px 0; color: #ffc107;'><strong>🟨 {int(row['total_yellows'])}</strong></p>
-                    <p style='margin: 5px 0; color: #dc3545;'><strong>🟥 {int(row['total_reds'])}</strong></p>
+                    <h3 style='margin: 0;'>{medal} {row['username']}</h3>
                 </div>
                 """, unsafe_allow_html=True)
     else:
@@ -461,7 +450,6 @@ def existing_cards_page():
         }
     )
 
-
 def admin_page():
     st.markdown("### Admin — Manage Cards")
     
@@ -533,7 +521,6 @@ def admin_page():
                 save_tickets(new_df)
                 st.success(f"✅ Successfully deleted {len(to_delete)} card(s)")
                 st.rerun()
-
 
 def main():
     if st.session_state.user is None:
