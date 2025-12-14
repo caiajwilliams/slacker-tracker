@@ -4,6 +4,8 @@ import uuid
 
 import pandas as pd
 import streamlit as st
+import base64
+import streamlit.components.v1 as components
 
 # App config
 st.set_page_config(page_title="Card Tracker", page_icon="🟨🟥", layout="wide")
@@ -57,6 +59,10 @@ USERS_PKL = os.path.join(ROOT, "user_data.pkl")
 USERS_CSV = os.path.join(ROOT, "user_data.csv")
 TICKETS_PKL = os.path.join(ROOT, "tickets.pkl")
 TICKETS_CSV = os.path.join(ROOT, "tickets.csv")
+RULES_PKL = os.path.join(ROOT, "rules.pkl")
+RULES_CSV = os.path.join(ROOT, "rules.csv")
+RED_IMG = os.path.join(ROOT, "assets", "red_card.png")
+YELLOW_IMG = os.path.join(ROOT, "assets", "yellow_card.png")
 
 YELLOW_EXPIRE_DAYS = 30
 YELLOW_WARNING_DAYS = 7  # Warn when yellow cards have less than 7 days left
@@ -83,6 +89,8 @@ def load_tickets():
             df = pd.read_pickle(TICKETS_PKL)
             if "date_received" in df.columns:
                 df["date_received"] = pd.to_datetime(df["date_received"])
+            if "notified" not in df.columns:
+                df["notified"] = ""
             return df
         except Exception:
             pass
@@ -90,6 +98,8 @@ def load_tickets():
         df = pd.read_csv(TICKETS_CSV, parse_dates=["date_received"]) if os.path.getsize(TICKETS_CSV) > 0 else pd.DataFrame(
             columns=["id", "receiver", "card_type", "date_received", "submitted_by", "status", "note"]
         )
+        if "notified" not in df.columns:
+            df["notified"] = ""
         try:
             df.to_pickle(TICKETS_PKL)
         except Exception:
@@ -104,6 +114,30 @@ def save_tickets(df):
         df.to_pickle(TICKETS_PKL)
     except Exception:
         df.to_csv(TICKETS_CSV, index=False)
+
+def load_rules():
+    if os.path.exists(RULES_PKL):
+        try:
+            df = pd.read_pickle(RULES_PKL)
+            return df
+        except Exception:
+            pass
+    if os.path.exists(RULES_CSV):
+        df = pd.read_csv(RULES_CSV) if os.path.getsize(RULES_CSV) > 0 else pd.DataFrame(
+            columns=["id", "text", "created_by", "status", "approvals", "proposed_by", "timestamp"]
+        )
+        try:
+            df.to_pickle(RULES_PKL)
+        except Exception:
+            pass
+        return df
+    return pd.DataFrame(columns=["id", "text", "created_by", "status", "approvals", "proposed_by", "timestamp"])
+
+def save_rules(df):
+    try:
+        df.to_pickle(RULES_PKL)
+    except Exception:
+        df.to_csv(RULES_CSV, index=False)
 
 def process_expirations_and_conversions(tickets):
     changed = False
@@ -134,6 +168,7 @@ def process_expirations_and_conversions(tickets):
                 "submitted_by": "system",
                 "status": "active",
                 "note": "Auto-converted from 3 yellows",
+                "notified": "",
             }
             df = pd.concat([pd.DataFrame([new_red]), df], ignore_index=True)
             changed = True
@@ -165,8 +200,234 @@ def format_status_badge(status):
         return "🔄 Converted"
     return status
 
+def approvals_to_list(approvals_str):
+    if pd.isna(approvals_str) or approvals_str is None or approvals_str == "":
+        return []
+    return [s for s in str(approvals_str).split(";") if s.strip() != ""]
+
+def list_to_approvals(lst):
+    if not lst:
+        return ""
+    return ";".join(sorted(set(lst)))
+
+def get_required_approvers(proposer):
+    # All non-admin users, excluding proposer
+    all_users = [u for u in users_df["username"].tolist() if u != "admin"]
+    # If users file doesn't include admin, no problem; admin is excluded anyway
+    req = set(all_users) - {proposer}
+    return sorted(req)
+
+def is_fully_approved(approvals_list, proposer):
+    required = set(get_required_approvers(proposer))
+    return required.issubset(set(approvals_list))
+
+def handle_login_notifications():
+    # Show a modal per unacknowledged active card for the logged-in user, one at a time
+    if not st.session_state.get("just_logged_in"):
+        return
+    user = st.session_state.user
+    if not user:
+        return
+
+    df = st.session_state.tickets
+    if "notified" not in df.columns:
+        df["notified"] = ""
+
+    # find unnotified active yellow/red cards
+    def user_not_notified(row):
+        notified_list = approvals_to_list(row.get("notified", ""))
+        return (
+            row.get("receiver") == user
+            and row.get("status") == "active"
+            and row.get("card_type") in ("Yellow", "Red")
+            and user not in notified_list
+        )
+
+    pending = [r for _, r in df.iterrows() if user_not_notified(r)]
+    if not pending:
+        st.session_state.just_logged_in = False
+        return
+
+    ticket = pending[0]
+    ticket_id = ticket.get("id")
+    ticket_card = ticket.get("card_type")
+    img = YELLOW_IMG if ticket_card == "Yellow" else RED_IMG
+
+    # Helper function to convert image to data URI
+    def img_to_data_uri(path):
+        try:
+            with open(path, "rb") as f:
+                data = f.read()
+            ext = os.path.splitext(path)[1].lstrip(".")
+            b64 = base64.b64encode(data).decode("utf-8")
+            return f"data:image/{ext};base64,{b64}"
+        except Exception:
+            return ""
+
+    img_uri = img_to_data_uri(img)
+
+    html = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="utf-8">
+        <style>
+            * {{
+                margin: 0;
+                padding: 0;
+                box-sizing: border-box;
+            }}
+            body {{
+                font-family: "Source Sans Pro", -apple-system, BlinkMacSystemFont,
+                             "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+                margin: 0;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                min-height: 100vh;
+                background: rgba(0,0,0,0.75);
+                padding: 20px;
+            }}
+            .modal {{
+                background: #fff;
+                padding: 30px;
+                border-radius: 12px;
+                max-width: 600px;
+                width: 100%;
+                text-align: center;
+                box-shadow: 0 8px 40px rgba(0,0,0,0.6);
+            }}
+            h2 {{
+                margin: 8px 0;
+                font-weight: 600;
+                color: #262730;
+            }}
+            p {{
+                margin: 8px 0;
+                line-height: 1.6;
+            }}
+            .detail {{
+                color: #555;
+            }}
+            .main-text {{
+                color: #333;
+                font-size: 1.1rem;
+            }}
+            button {{
+                background: #0d6efd;
+                color: #fff;
+                padding: 12px 30px;
+                border-radius: 8px;
+                border: none;
+                font-weight: 600;
+                cursor: pointer;
+                font-size: 1rem;
+                font-family: inherit;
+                transition: background 0.2s;
+                margin-top: 10px;
+            }}
+            button:hover {{
+                background: #0b5ed7;
+            }}
+            button:disabled {{
+                background: #6c757d;
+                cursor: not-allowed;
+            }}
+            img {{
+                max-width: 200px;
+                height: auto;
+                margin-bottom: 15px;
+            }}
+        </style>
+    </head>
+    <body>
+        <div class="modal">
+            <div>
+                <img src="{img_uri}" alt="{ticket_card} card" />
+            </div>
+            <h2>You received a {ticket_card} Card</h2>
+            <p class="main-text">
+                {ticket_card} card received on {ticket.get("date_received")}
+            </p>
+            <p class="detail">
+                Submitted by: {ticket.get("submitted_by") or "N/A"}
+            </p>
+            <p class="detail">
+                Note/Rule: {ticket.get("note") or "N/A"}
+            </p>
+            <div style="margin-top:20px;">
+                <button id="ack">Acknowledge</button>
+            </div>
+        </div>
+
+        <script>
+            (function() {{
+                const btn = document.getElementById("ack");
+                const ticketId = "{ticket_id}";
+                let acknowledged = false;
+                
+                btn.addEventListener("click", function () {{
+                    if (acknowledged) return;
+                    acknowledged = true;
+                    btn.disabled = true;
+                    btn.innerText = "Acknowledged ✓";
+                    
+                    // Send message to Streamlit
+                    window.parent.postMessage({{
+                        type: 'streamlit:setComponentValue',
+                        value: ticketId
+                    }}, '*');
+                    
+                    // Also try the alternative method
+                    if (window.parent.Streamlit) {{
+                        window.parent.Streamlit.setComponentValue(ticketId);
+                    }}
+                }});
+                
+                // Notify Streamlit that component is ready
+                window.parent.postMessage({{
+                    type: 'streamlit:componentReady'
+                }}, '*');
+            }})();
+        </script>
+    </body>
+    </html>
+    """
+
+    # Use a container to prevent flickering
+    container = st.container()
+    with container:
+        # Render modal with a key to maintain state
+        res = components.html(html, height=600, scrolling=False)
+
+    # Process acknowledgement
+    if res:
+        ack_id = str(res).strip()
+        if ack_id:  # Make sure we have a valid ID
+            ticket_mask = st.session_state.tickets["id"] == ack_id
+
+            if ticket_mask.any():
+                current_notified = (
+                    st.session_state.tickets.loc[ticket_mask, "notified"].iloc[0]
+                )
+                lst = approvals_to_list(current_notified)
+
+                if user not in lst:
+                    lst.append(user)
+                    st.session_state.tickets.loc[
+                        ticket_mask, "notified"
+                    ] = list_to_approvals(lst)
+                    save_tickets(st.session_state.tickets)
+
+            # Exit notification flow and return to normal app
+            st.session_state.just_logged_in = False
+            st.rerun()
+
+
+
 users_df = load_users()
 tickets_df = load_tickets()
+rules_df = load_rules()
 
 # Initialize session state
 if "user" not in st.session_state:
@@ -175,13 +436,14 @@ if "tickets" not in st.session_state:
     st.session_state.tickets = tickets_df
 if "show_success" not in st.session_state:
     st.session_state.show_success = None
+if "rules" not in st.session_state:
+    st.session_state.rules = rules_df
 
 # Process expirations/conversions on load
 processed, changed = process_expirations_and_conversions(st.session_state.tickets)
 if changed:
     st.session_state.tickets = processed
     save_tickets(processed)
-
 
 def login_page():
     # Center the login form
@@ -207,6 +469,7 @@ def login_page():
             if username == "admin":
                 if password == "adminpw":
                     st.session_state.user = "admin"
+                    st.session_state.just_logged_in = True
                     st.session_state.page = "Existing Cards"
                     st.rerun()
                 else:
@@ -216,6 +479,7 @@ def login_page():
             user_row = users_df[users_df["username"] == username]
             if not user_row.empty and (pd.isna(user_row.iloc[0].get("password")) or password == user_row.iloc[0].get("password")):
                 st.session_state.user = username
+                st.session_state.just_logged_in = True
                 st.session_state.page = "Add Card"
                 st.rerun()
             else:
@@ -224,6 +488,7 @@ def login_page():
 def logout():
     st.session_state.user = None
     st.session_state.show_success = None
+    st.session_state.just_logged_in = False
 
 def add_card_page():
     st.markdown("### Add a New Card")
@@ -239,7 +504,15 @@ def add_card_page():
             help="Yellow cards expire after 30 days. 3 Yellow cards auto-convert to 1 Red card.",
         )
         date_received = st.date_input("Date received", value=datetime.date.today())
-        note = st.text_area("Note (optional)", height=100)
+        # Notes are pre-populated from active house rules; allow custom note as 'Other'
+        active_rule_texts = st.session_state.rules[st.session_state.rules['status'] == 'active']['text'].tolist() if len(st.session_state.rules) > 0 else []
+        note_options = active_rule_texts
+        note_choice = st.selectbox("Rule breached", note_options, index=0)
+        note = ""
+        if note_choice == "Other (specify)":
+            note = st.text_area("Custom note (specify reason)", height=100)
+        elif note_choice != "(None)":
+            note = note_choice
         submitted = st.form_submit_button("Submit Card", use_container_width=True, type="primary")
 
     if submitted:
@@ -253,6 +526,7 @@ def add_card_page():
             "submitted_by": submitted_by,
             "status": "active",
             "note": note,
+            "notified": "",
         }
         st.session_state.tickets = pd.concat([pd.DataFrame([new_ticket]), st.session_state.tickets], ignore_index=True)
 
@@ -519,13 +793,198 @@ def admin_page():
                 new_df = df[~df["id"].isin(to_delete)].reset_index(drop=True)
                 st.session_state.tickets = new_df
                 save_tickets(new_df)
-                st.success(f"✅ Successfully deleted {len(to_delete)} card(s)")
+                st.success(f"✅ Successfully deleted {len(to_delete)} rule(s)")
                 st.rerun()
+
+def house_rules_page():
+    st.markdown("### House Rules")
+
+    df = st.session_state.rules.copy()
+
+    # Add new rule
+    if "new_rule_text" not in st.session_state:
+        st.session_state.new_rule_text = ""
+    with st.form("add_rule_form"):
+        new_rule_text = st.text_area("New rule text", height=120, key="new_rule_text")
+        col1, col2 = st.columns([1, 4])
+        with col1:
+            add_submitted = st.form_submit_button("Propose Rule", use_container_width=True, type="primary")
+
+    if add_submitted:
+        if not new_rule_text or new_rule_text.strip() == "":
+            st.warning("Please provide rule text")
+        else:
+            created_by = st.session_state.user
+            new_rule = {
+                "id": str(uuid.uuid4()),
+                "text": new_rule_text.strip(),
+                "created_by": created_by,
+                "status": "active" if (created_by == "admin" or len(get_required_approvers(created_by)) == 0) else "pending_add",
+                "approvals": "" if created_by != "admin" else "",
+                "proposed_by": created_by if created_by != "admin" else "",
+                "timestamp": datetime.datetime.utcnow().isoformat(),
+            }
+            st.session_state.rules = pd.concat([pd.DataFrame([new_rule]), st.session_state.rules], ignore_index=True)
+            save_rules(st.session_state.rules)
+            if created_by == "admin":
+                st.success("✅ Rule added")
+            else:
+                if new_rule['status'] == 'active':
+                    st.success("✅ Rule added")
+                else:
+                    st.success("✅ Rule proposed (pending approvals)")
+            # clear the text area
+            st.session_state.new_rule_text = ""
+            st.rerun()
+
+    st.markdown("---")
+
+    # Active rules
+    active_rules = df[df["status"] == "active"].reset_index(drop=True)
+    st.markdown(f"#### Active Rules (Total: {len(active_rules)})")
+    if len(active_rules) == 0:
+        st.info("No rules have been added yet.")
+    else:
+        for _, row in active_rules.iterrows():
+            st.markdown(f"**• {row['text']}**  ")
+            # Removal requests can be made in the "Request Rule Removal" section below
+
+    # Request removals via multiselect (separate section)
+    if len(active_rules) > 0:
+        st.markdown("---")
+        st.markdown("#### Request Rule Removal")
+        active_ids = active_rules['id'].tolist()
+        label_map = {r['id']: r['text'] for _, r in active_rules.iterrows()}
+        if "propose_remove_list" not in st.session_state:
+            st.session_state.propose_remove_list = []
+        with st.form("propose_removals_form"):
+            to_remove = st.multiselect(
+                "Select active rules to request removal",
+                options=active_ids,
+                format_func=lambda x: label_map.get(x, x),
+                default=st.session_state.propose_remove_list,
+                key="propose_remove_list",
+            )
+            col1, col2 = st.columns([1, 4])
+            with col1:
+                remove_submitted = st.form_submit_button("Propose Removal(s)", use_container_width=True, type="secondary")
+
+        if remove_submitted:
+            if not to_remove:
+                st.warning("No rules selected for removal")
+            else:
+                if st.session_state.user == 'admin':
+                    # Admin deletes immediately
+                    new_df = st.session_state.rules[~st.session_state.rules['id'].isin(to_remove)].reset_index(drop=True)
+                    st.session_state.rules = new_df
+                    save_rules(new_df)
+                    st.success(f"✅ Deleted {len(to_remove)} rule(s)")
+                    # clear selection
+                    st.session_state.propose_remove_list = []
+                    st.rerun()
+                else:
+                    for rid in to_remove:
+                        required = get_required_approvers(st.session_state.user)
+                        if len(required) == 0:
+                            # delete immediately
+                            st.session_state.rules = st.session_state.rules[st.session_state.rules['id'] != rid].reset_index(drop=True)
+                        else:
+                            st.session_state.rules.loc[st.session_state.rules['id'] == rid, 'status'] = 'pending_remove'
+                            st.session_state.rules.loc[st.session_state.rules['id'] == rid, 'proposed_by'] = st.session_state.user
+                            st.session_state.rules.loc[st.session_state.rules['id'] == rid, 'approvals'] = ''
+                    save_rules(st.session_state.rules)
+                    st.success(f"✅ Removal(s) proposed (pending approvals)")
+                    st.session_state.propose_remove_list = []
+                    st.rerun()
+
+    st.markdown("---")
+
+    # Pending additions
+    pending_adds = df[df['status'] == 'pending_add'].reset_index(drop=True)
+    st.markdown(f"#### Pending Additions (Total: {len(pending_adds)})")
+    if len(pending_adds) == 0:
+        st.info("No pending additions")
+    else:
+        for _, row in pending_adds.iterrows():
+            st.markdown(f"**• {row['text']}**  ")
+            st.caption(f"Proposed by: {row['proposed_by']}")
+            approvals_list = approvals_to_list(row['approvals'])
+            st.write(f"Approvals: {', '.join(approvals_list) if approvals_list else 'None yet'}")
+            req_list = get_required_approvers(row['proposed_by'])
+            st.write(f"Required approvals: {len(req_list)} — {', '.join(req_list) if req_list else 'No other users'}")
+
+            # Admin can activate immediately
+            if st.session_state.user == 'admin':
+                if st.button(f"Activate (Admin) - {row['id']}", key=f"activate-{row['id']}"):
+                    st.session_state.rules.loc[st.session_state.rules['id'] == row['id'], 'status'] = 'active'
+                    st.session_state.rules.loc[st.session_state.rules['id'] == row['id'], 'approvals'] = ''
+                    st.session_state.rules.loc[st.session_state.rules['id'] == row['id'], 'proposed_by'] = ''
+                    save_rules(st.session_state.rules)
+                    st.success("✅ Rule activated")
+                    st.rerun()
+            else:
+                # Show approve button if current user is required approver
+                required = get_required_approvers(row['proposed_by'])
+                if st.session_state.user in required and st.session_state.user not in approvals_list:
+                    if st.button(f"Approve - {row['id']}", key=f"approve-add-{row['id']}"):
+                        approvals_list.append(st.session_state.user)
+                        st.session_state.rules.loc[st.session_state.rules['id'] == row['id'], 'approvals'] = list_to_approvals(approvals_list)
+                        # If fully approved, set active
+                        if is_fully_approved(approvals_list, row['proposed_by']):
+                            st.session_state.rules.loc[st.session_state.rules['id'] == row['id'], 'status'] = 'active'
+                            st.session_state.rules.loc[st.session_state.rules['id'] == row['id'], 'proposed_by'] = ''
+                            st.session_state.rules.loc[st.session_state.rules['id'] == row['id'], 'approvals'] = ''
+                        save_rules(st.session_state.rules)
+                        st.success("✅ Approved")
+                        st.rerun()
+
+    st.markdown("---")
+
+    # Pending removals
+    pending_removes = df[df['status'] == 'pending_remove'].reset_index(drop=True)
+    st.markdown(f"#### Pending Removals (Total: {len(pending_removes)})")
+    if len(pending_removes) == 0:
+        st.info("No pending removals")
+    else:
+        for _, row in pending_removes.iterrows():
+            st.markdown(f"**• {row['text']}**  ")
+            st.caption(f"Removal proposed by: {row['proposed_by']}")
+            approvals_list = approvals_to_list(row['approvals'])
+            st.write(f"Approvals: {', '.join(approvals_list) if approvals_list else 'None yet'}")
+            req_list = get_required_approvers(row['proposed_by'])
+            st.write(f"Required approvals: {len(req_list)} — {', '.join(req_list) if req_list else 'No other users'}")
+            if st.session_state.user == 'admin':
+                if st.button(f"Delete (Admin) - {row['id']}", key=f"del-pen-{row['id']}"):
+                    new_df = st.session_state.rules[st.session_state.rules['id'] != row['id']].reset_index(drop=True)
+                    st.session_state.rules = new_df
+                    save_rules(new_df)
+                    st.success("✅ Rule deleted")
+                    st.rerun()
+            else:
+                required = get_required_approvers(row['proposed_by'])
+                if st.session_state.user in required and st.session_state.user not in approvals_list:
+                    if st.button(f"Approve Removal - {row['id']}", key=f"approve-rem-{row['id']}"):
+                        approvals_list.append(st.session_state.user)
+                        if is_fully_approved(approvals_list, row['proposed_by']):
+                            # delete
+                            new_df = st.session_state.rules[st.session_state.rules['id'] != row['id']].reset_index(drop=True)
+                            st.session_state.rules = new_df
+                            save_rules(new_df)
+                            st.success("✅ Rule removed")
+                            st.rerun()
+                        else:
+                            st.session_state.rules.loc[st.session_state.rules['id'] == row['id'], 'approvals'] = list_to_approvals(approvals_list)
+                            save_rules(st.session_state.rules)
+                            st.success("✅ Removal approved")
+                            st.rerun()
 
 def main():
     if st.session_state.user is None:
         login_page()
         return
+
+    # If user just logged in, show card notifications (one-by-one modals)
+    handle_login_notifications()
 
     # Sidebar
     with st.sidebar:
@@ -533,7 +992,7 @@ def main():
         st.markdown("---")
         
         # Navigation
-        pages = ["Existing Cards", "Add Card"]
+        pages = ["Existing Cards", "Add Card", "House Rules"]
         if st.session_state.user == "admin":
             pages.append("Admin")
 
@@ -565,6 +1024,8 @@ def main():
         add_card_page()
     elif page == "Existing Cards":
         existing_cards_page()
+    elif page == "House Rules":
+        house_rules_page()
     elif page == "Admin":
         admin_page()
 
