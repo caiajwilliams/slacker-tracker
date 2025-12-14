@@ -12,8 +12,6 @@ import streamlit as st
 
 
 
-
-
 # App config
 st.set_page_config(page_title="Card Tracker", page_icon="🟨🟥", layout="wide")
 
@@ -713,30 +711,50 @@ def house_rules_page():
             req_list = get_required_approvers(row['proposed_by'])
             st.write(f"Required approvals: {len(req_list)} — {', '.join(req_list) if req_list else 'No other users'}")
 
-            # Admin can activate immediately
+            # Admin can activate immediately, with reject option
             if st.session_state.user == 'admin':
-                if st.button(f"Activate (Admin) - {row['id']}", key=f"activate-{row['id']}"):
-                    st.session_state.rules.loc[st.session_state.rules['id'] == row['id'], 'status'] = 'active'
-                    st.session_state.rules.loc[st.session_state.rules['id'] == row['id'], 'approvals'] = ''
-                    st.session_state.rules.loc[st.session_state.rules['id'] == row['id'], 'proposed_by'] = ''
-                    save_rules(st.session_state.rules)
-                    st.success("✅ Rule activated")
-                    st.rerun()
+                colA, colB = st.columns([1,1])
+                with colA:
+                    if st.button(f"✅ Activate (Admin) - {row['id']}", key=f"activate-{row['id']}"):
+                        st.session_state.rules.loc[st.session_state.rules['id'] == row['id'], 'status'] = 'active'
+                        st.session_state.rules.loc[st.session_state.rules['id'] == row['id'], 'approvals'] = ''
+                        st.session_state.rules.loc[st.session_state.rules['id'] == row['id'], 'proposed_by'] = ''
+                        save_rules(st.session_state.rules)
+                        st.success("✅ Rule activated")
+                        st.rerun()
+                with colB:
+                    if st.button(f"❌ Reject (Admin) - {row['id']}", key=f"reject-add-admin-{row['id']}"):
+                        st.session_state.rules.loc[st.session_state.rules['id'] == row['id'], 'status'] = 'rejected'
+                        st.session_state.rules.loc[st.session_state.rules['id'] == row['id'], 'proposed_by'] = ''
+                        st.session_state.rules.loc[st.session_state.rules['id'] == row['id'], 'approvals'] = ''
+                        save_rules(st.session_state.rules)
+                        st.success("❌ Rule proposal rejected")
+                        st.rerun()
             else:
-                # Show approve button if current user is required approver
+                # Show approve/reject buttons if current user is required approver
                 required = get_required_approvers(row['proposed_by'])
                 if st.session_state.user in required and st.session_state.user not in approvals_list:
-                    if st.button(f"Approve - {row['id']}", key=f"approve-add-{row['id']}"):
-                        approvals_list.append(st.session_state.user)
-                        st.session_state.rules.loc[st.session_state.rules['id'] == row['id'], 'approvals'] = list_to_approvals(approvals_list)
-                        # If fully approved, set active
-                        if is_fully_approved(approvals_list, row['proposed_by']):
-                            st.session_state.rules.loc[st.session_state.rules['id'] == row['id'], 'status'] = 'active'
+                    colA, colB = st.columns([1,1])
+                    with colA:
+                        if st.button(f"✅ Approve - {row['id']}", key=f"approve-add-{row['id']}"):
+                            approvals_list.append(st.session_state.user)
+                            st.session_state.rules.loc[st.session_state.rules['id'] == row['id'], 'approvals'] = list_to_approvals(approvals_list)
+                            # If fully approved, set active
+                            if is_fully_approved(approvals_list, row['proposed_by']):
+                                st.session_state.rules.loc[st.session_state.rules['id'] == row['id'], 'status'] = 'active'
+                                st.session_state.rules.loc[st.session_state.rules['id'] == row['id'], 'proposed_by'] = ''
+                                st.session_state.rules.loc[st.session_state.rules['id'] == row['id'], 'approvals'] = ''
+                            save_rules(st.session_state.rules)
+                            st.success("✅ Approved")
+                            st.rerun()
+                    with colB:
+                        if st.button(f"❌ Reject - {row['id']}", key=f"reject-add-{row['id']}"):
+                            st.session_state.rules.loc[st.session_state.rules['id'] == row['id'], 'status'] = 'rejected'
                             st.session_state.rules.loc[st.session_state.rules['id'] == row['id'], 'proposed_by'] = ''
                             st.session_state.rules.loc[st.session_state.rules['id'] == row['id'], 'approvals'] = ''
-                        save_rules(st.session_state.rules)
-                        st.success("✅ Approved")
-                        st.rerun()
+                            save_rules(st.session_state.rules)
+                            st.success("❌ Rule proposal rejected")
+                            st.rerun()
 
     st.markdown("---")
 
@@ -754,28 +772,49 @@ def house_rules_page():
             req_list = get_required_approvers(row['proposed_by'])
             st.write(f"Required approvals: {len(req_list)} — {', '.join(req_list) if req_list else 'No other users'}")
             if st.session_state.user == 'admin':
-                if st.button(f"Delete (Admin) - {row['id']}", key=f"del-pen-{row['id']}"):
-                    new_df = st.session_state.rules[st.session_state.rules['id'] != row['id']].reset_index(drop=True)
-                    st.session_state.rules = new_df
-                    save_rules(new_df)
-                    st.success("✅ Rule deleted")
-                    st.rerun()
+                colA, colB = st.columns([1,1])
+                with colA:
+                    if st.button(f"🗑️ Delete (Admin) - {row['id']}", key=f"del-pen-{row['id']}"):
+                        new_df = st.session_state.rules[st.session_state.rules['id'] != row['id']].reset_index(drop=True)
+                        st.session_state.rules = new_df
+                        save_rules(new_df)
+                        st.success("✅ Rule deleted")
+                        st.rerun()
+                with colB:
+                    if st.button(f"❌ Reject (Admin) - {row['id']}", key=f"reject-rem-admin-{row['id']}"):
+                        # Cancel removal request, restore active status
+                        st.session_state.rules.loc[st.session_state.rules['id'] == row['id'], 'status'] = 'active'
+                        st.session_state.rules.loc[st.session_state.rules['id'] == row['id'], 'proposed_by'] = ''
+                        st.session_state.rules.loc[st.session_state.rules['id'] == row['id'], 'approvals'] = ''
+                        save_rules(st.session_state.rules)
+                        st.success("❌ Removal request rejected (restored)")
+                        st.rerun()
             else:
                 required = get_required_approvers(row['proposed_by'])
                 if st.session_state.user in required and st.session_state.user not in approvals_list:
-                    if st.button(f"Approve Removal - {row['id']}", key=f"approve-rem-{row['id']}"):
-                        approvals_list.append(st.session_state.user)
-                        if is_fully_approved(approvals_list, row['proposed_by']):
-                            # delete
-                            new_df = st.session_state.rules[st.session_state.rules['id'] != row['id']].reset_index(drop=True)
-                            st.session_state.rules = new_df
-                            save_rules(new_df)
-                            st.success("✅ Rule removed")
-                            st.rerun()
-                        else:
-                            st.session_state.rules.loc[st.session_state.rules['id'] == row['id'], 'approvals'] = list_to_approvals(approvals_list)
+                    colA, colB = st.columns([1,1])
+                    with colA:
+                        if st.button(f"✅ Approve Removal - {row['id']}", key=f"approve-rem-{row['id']}"):
+                            approvals_list.append(st.session_state.user)
+                            if is_fully_approved(approvals_list, row['proposed_by']):
+                                # delete
+                                new_df = st.session_state.rules[st.session_state.rules['id'] != row['id']].reset_index(drop=True)
+                                st.session_state.rules = new_df
+                                save_rules(new_df)
+                                st.success("✅ Rule removed")
+                                st.rerun()
+                            else:
+                                st.session_state.rules.loc[st.session_state.rules['id'] == row['id'], 'approvals'] = list_to_approvals(approvals_list)
+                                save_rules(st.session_state.rules)
+                                st.success("✅ Removal approved")
+                                st.rerun()
+                    with colB:
+                        if st.button(f"❌ Reject Removal - {row['id']}", key=f"reject-rem-{row['id']}"):
+                            st.session_state.rules.loc[st.session_state.rules['id'] == row['id'], 'status'] = 'active'
+                            st.session_state.rules.loc[st.session_state.rules['id'] == row['id'], 'proposed_by'] = ''
+                            st.session_state.rules.loc[st.session_state.rules['id'] == row['id'], 'approvals'] = ''
                             save_rules(st.session_state.rules)
-                            st.success("✅ Removal approved")
+                            st.success("❌ Removal request rejected (restored)")
                             st.rerun()
 
 def main():
