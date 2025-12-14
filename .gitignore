@@ -1,14 +1,68 @@
-GitHub Copilot
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
 
-Your `.gitignore` looks good overall. It covers standard Python project files and dependencies well. A few observations:
+# C extensions
+*.so
 
-**Good:**
-- Covers Python bytecode, virtual environments, and build artifacts
-- Includes Streamlit secrets
-- Includes common IDE files and lock files
+# Distribution / packaging
+.Python
+env/
+venv/
+ENV/
+*.egg-info/
+*.egg
+build/
+dist/
 
-**Considerations:**
-- Ignoring `main.py` might be too broad if it's a core project file you want to version control
-- The commented-out `.idea/` is fine if you prefer to include IDE settings, but uncomment it if you want to exclude PyCharm files entirely
+# PyInstaller
+*.manifest
+*.spec
 
-If `main.py` is your entry point, consider removing that line and committing it instead.
+# Installer logs
+debug.log
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+pytest_cache/
+
+# Streamlit specific
+.streamlit/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# pyenv
+.python-version
+
+# celery beat schedule file
+celerybeat-schedule
+
+# dotenv
+.env
+.env.*
+
+# VS Code
+.vscode/
+
+# macOS
+.DS_Store
+
+# Windows
+Thumbs.db
+ehshell.exe
+
+# Logs
+*.log
+*.log.*
+
+# Ignore lock files
+poetry.lock
+Pipfile.lock
+uv.lock
